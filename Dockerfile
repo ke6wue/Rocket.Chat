@@ -2,7 +2,7 @@
 FROM node:14-alpine AS build-stage
 WORKDIR /app
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+RUN yarn install --network-timeout 100000
 COPY . .
 RUN yarn build
 
