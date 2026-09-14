@@ -1,12 +1,12 @@
 # Stage 1: Build source code using Node 22 and Yarn Berry
 FROM node:22-alpine AS build-stage
 
-# Install build dependencies required for native node modules
+# Install build dependencies required for native node modules (all lowercase apk packages)
 RUN apk add --no-cache python3 make g++ git
 
 WORKDIR /app
 
-# Enable Corepack to use the exact Yarn version specified in package.json
+# Enable Corepack to use Yarn Berry
 RUN corepack enable
 
 # Copy package definitions and lockfile
@@ -14,7 +14,7 @@ COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn ./.yarn
 COPY packages ./packages
 
-# Install dependencies (ignoring strict engine checks)
+# Install dependencies
 RUN yarn install --ignore-engines || yarn install --no-immutable --ignore-engines
 
 # Copy remaining application source
@@ -26,7 +26,8 @@ RUN yarn build
 # Stage 2: Production Runtime Environment
 FROM node:22-alpine
 
-RUN apk add --no-cache GraphicsMagick
+# Fixed: lower-case package name for Alpine apk manager
+RUN apk add --no-cache graphicsmagick
 
 WORKDIR /app
 
