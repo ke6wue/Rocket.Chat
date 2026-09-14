@@ -1,7 +1,7 @@
 # Stage 1: Build source code using Node 22, Deno, and Yarn Berry
 FROM node:22-alpine AS build-stage
 
-# Install build tools, python, git, and Deno (required for @rocket.chat/apps)
+# Install build tools, python, git, and Deno
 RUN apk add --no-cache python3 make g++ git curl deno
 
 WORKDIR /app
@@ -18,16 +18,22 @@ RUN yarn install --no-immutable
 # Build the Meteor production bundle
 RUN yarn build
 
+# Ensure bundle location exists for Stage 2 copy
+RUN if [ -d "/app/apps/meteor/build" ]; then cp -r /app/apps/meteor/build /app/dist-build; \
+    elif [ -d "/app/apps/meteor/.meteor/local/build" ]; then cp -r /app/apps/meteor/.meteor/local/build /app/dist-build; \
+    elif [ -d "/app/build" ]; then cp -r /app/build /app/dist-build; \
+    fi
+
 # Stage 2: Production Runtime Environment
 FROM node:22-alpine
 
-# Install runtime dependencies (graphicsmagick and deno for Apps-Engine execution)
+# Install runtime dependencies
 RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
-# Copy the built production bundle
-COPY --from=build-stage /app/build /app
+# Copy the generated build folder from Stage 1
+COPY --from=build-stage /app/dist-build /app
 
 WORKDIR /app/bundle/programs/server
 RUN corepack enable && yarn install --production
