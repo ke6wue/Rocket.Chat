@@ -1,24 +1,19 @@
 # Stage 1: Build source code using Node 22 and Yarn Berry
 FROM node:22-alpine AS build-stage
 
-# Install build dependencies required for native node modules (all lowercase apk packages)
+# Install build dependencies required for native node modules
 RUN apk add --no-cache python3 make g++ git
 
 WORKDIR /app
 
-# Enable Corepack to use Yarn Berry
+# Enable Corepack to manage Yarn 4.x
 RUN corepack enable
 
-# Copy package definitions and lockfile
-COPY package.json yarn.lock .yarnrc.yml ./
-COPY .yarn ./.yarn
-COPY packages ./packages
-
-# Install dependencies
-RUN yarn install --ignore-engines || yarn install --no-immutable --ignore-engines
-
-# Copy remaining application source
+# Copy the entire codebase first so Yarn Berry workspaces resolve cleanly
 COPY . .
+
+# Run Yarn 4 install without immutable lockfile constraints
+RUN yarn install --no-immutable
 
 # Build the Meteor production bundle
 RUN yarn build
@@ -26,16 +21,15 @@ RUN yarn build
 # Stage 2: Production Runtime Environment
 FROM node:22-alpine
 
-# Fixed: lower-case package name for Alpine apk manager
 RUN apk add --no-cache graphicsmagick
 
 WORKDIR /app
 
-# Copy built bundle from build-stage
+# Copy the built production bundle from the build stage
 COPY --from=build-stage /app/build /app
 
 WORKDIR /app/bundle/programs/server
-RUN corepack enable && yarn install --production --ignore-engines
+RUN corepack enable && yarn install --production
 
 WORKDIR /app/bundle
 
