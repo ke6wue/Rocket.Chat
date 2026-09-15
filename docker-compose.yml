@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   rocketchat:
     build:
@@ -12,19 +10,21 @@ services:
       - ROOT_URL=http://localhost:3000
       - MONGO_URL=mongodb://mongodb:27017/rocketchat?replicaSet=rs0
       - MONGO_OPLOG_URL=mongodb://mongodb:27017/local?replicaSet=rs0
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASS=ChangeThisSecurePassword
+      - ADMIN_EMAIL=admin@yourdistrict.org
     depends_on:
       - mongodb
     ports:
       - "3000:3000"
 
   mongodb:
-    image: bitnami/mongodb:5.0
+    image: mongo:6.0
     restart: always
     volumes:
-      - mongodb_data:/bitnami/mongodb
-    environment:
-      - MONGODB_REPLICA_SET_MODE=primary
-      - MONGODB_REPLICA_SET_NAME=rs0
+      - mongodb_data:/data/db
+    command: mongod --oplogSize 128 --replicaSet rs0
 
 volumes:
   mongodb_data:
+    driver: local
