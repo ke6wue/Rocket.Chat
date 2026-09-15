@@ -67,13 +67,13 @@ RUN mkdir -p /app/bundle-out && \
 # ==============================================================================
 FROM node:22-alpine
 
-# Install runtime dependencies (GraphicsMagick for avatars/media, Deno for Apps)
+# Install runtime dependencies
 RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
-# Copy compiled production bundle from Stage 1 directly into /app/bundle
-COPY --from=builder /app/bundle-out /app/bundle
+# Crucial fix: Trailing slash ensures contents are copied directly into /app/bundle
+COPY --from=builder /app/bundle-out/ /app/bundle/
 
 WORKDIR /app/bundle/programs/server
 RUN corepack enable && yarn install --production
