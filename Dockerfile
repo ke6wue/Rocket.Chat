@@ -1,13 +1,18 @@
-# Stage 1: Build Meteor Bundle using Node 22, Deno, and Yarn
-FROM node:22-alpine AS build-stage
+# Stage 1: Build source code using Node 22, Deno, Meteor, and Yarn Berry
+FROM node:22-alpine AS builder
 
-# Install native build tools
-RUN apk add --no-cache python3 make g++ git curl deno
+# Install build tools, python, git, curl, bash, and Deno
+RUN apk add --no-cache python3 make g++ git curl bash deno
 
 WORKDIR /app
 
 # Enable Corepack for Yarn Berry
 RUN corepack enable
+
+# Install Meteor CLI inside the build container
+RUN curl "https://install.meteor.com/" | sh
+ENV PATH="${PATH}:/root/.meteor"
+ENV METEOR_ALLOW_SUPERUSER=true
 
 # Copy source repository
 COPY . .
@@ -15,26 +20,23 @@ COPY . .
 # Install workspace dependencies
 RUN yarn install --no-immutable
 
-# 1. Build all required monorepo packages
+# Build all monorepo packages
 RUN yarn build
 
-# 2. Bundle the main Meteor application into a standalone Node release
+# Build the main Meteor application bundle
 WORKDIR /app/apps/meteor
-RUN yarn ddp || (npx meteor build --server-only --directory /app/bundle-out)
-
-# Move the generated bundle to a predictable root path
-RUN if [ -d "/app/apps/meteor/bundle" ]; then mv /app/apps/meteor/bundle /app/bundle-out; fi
+RUN yarn build:ci
 
 # Stage 2: Production Runtime Environment
 FROM node:22-alpine
 
-# Install runtime binary dependencies
+# Install runtime dependencies
 RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
 # Copy the compiled Meteor bundle from Stage 1
-COPY --from=build-stage /app/bundle-out /app
+COPY --from=builder /app/apps/meteor/dist/bundle /app/bundle
 
 WORKDIR /app/bundle/programs/server
 RUN corepack enable && yarn install --production
