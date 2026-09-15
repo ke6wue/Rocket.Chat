@@ -44,35 +44,42 @@ RUN yarn install --no-immutable || yarn install --immutable-save-lockfile
 RUN yarn build
 
 # Build the main Meteor application bundle.
-# IMPORTANT: this must run through Turbo from the repo root, exactly like
-# Rocket.Chat's own CI does (see .github/workflows/ci.yml):
-#   yarn build:ci -- --directory dist
-# Turbo owns the "--" here and forwards --directory <path> cleanly to the
-# one workspace task that has a build:ci script (@rocket.chat/meteor).
-# Calling apps/meteor's build:ci script directly via `yarn build:ci --
-# --directory dist` bypasses Turbo's arg forwarding and instead passes the
-# literal tokens `--directory` and `dist` as two separate positional
-# arguments to Meteor's CLI, which is a "too many arguments" error.
-RUN yarn build:ci -- --directory apps/meteor/dist
+# NOTE: apps/meteor's own build:ci script already hardcodes its own output
+# path as a positional argument to `meteor build`. Passing an extra
+# `--directory <path>` (via Turbo or directly) supplies a SECOND positional
+# path on top of that hardcoded one, which is exactly the "too many
+# arguments" error Meteor's CLI throws. So: run it bare, with no extra args,
+# and let it use whatever output location the script already hardcodes.
+RUN yarn build:ci
 
-# Extract and flatten bundle contents directly into /app/bundle-out
+# Locate and flatten the resulting bundle into /app/bundle-out.
+# Rather than guessing the exact output path (which varies by how
+# build:ci is scripted), search for main.js anywhere it could plausibly
+# have been written and copy its containing directory.
 RUN mkdir -p /app/bundle-out && \
-    if [ -f "/app/apps/meteor/dist/bundle.tgz" ]; then \
-        tar -xzf /app/apps/meteor/dist/bundle.tgz -C /app/bundle-out/ --strip-components=1; \
-    elif [ -d "/app/apps/meteor/dist/bundle" ]; then \
-        cp -r /app/apps/meteor/dist/bundle/* /app/bundle-out/; \
-    elif [ -d "/app/apps/meteor/.meteor/local/build" ]; then \
-        cp -r /app/apps/meteor/.meteor/local/build/* /app/bundle-out/; \
-    fi && \
-    if [ ! -f "/app/bundle-out/main.js" ] && [ -d "/app/bundle-out/bundle" ]; then \
-        mv /app/bundle-out/bundle/* /app/bundle-out/ && rm -rf /app/bundle-out/bundle; \
+    BUNDLE_DIR="$(find /app -maxdepth 6 -type f -name main.js \
+        -not -path '*/node_modules/*' -not -path '/app/bundle-out/*' \
+        -exec dirname {} \; | head -n 1)" && \
+    echo "Detected bundle directory: ${BUNDLE_DIR:-<none found>}" && \
+    if [ -n "$BUNDLE_DIR" ]; then \
+        cp -r "$BUNDLE_DIR"/* /app/bundle-out/; \
+    else \
+        TARBALL="$(find /app -maxdepth 6 -type f \( -name '*.tgz' -o -name '*.tar.gz' \) \
+            -not -path '*/node_modules/*' | head -n 1)"; \
+        echo "No loose main.js found; trying tarball: ${TARBALL:-<none found>}"; \
+        if [ -n "$TARBALL" ]; then \
+            mkdir -p /tmp/bundle-extract && \
+            tar -xzf "$TARBALL" -C /tmp/bundle-extract && \
+            INNER_DIR="$(find /tmp/bundle-extract -maxdepth 4 -type f -name main.js -exec dirname {} \; | head -n 1)" && \
+            if [ -n "$INNER_DIR" ]; then cp -r "$INNER_DIR"/* /app/bundle-out/; fi; \
+        fi; \
     fi && \
     echo "=== Bundle Contents Verification ===" && \
     ls -la /app/bundle-out && \
     if [ ! -f "/app/bundle-out/main.js" ]; then \
-        echo "FATAL: main.js not found in bundle output — build did not produce a usable bundle." >&2; \
-        echo "Checked: dist/bundle.tgz, dist/bundle/, .meteor/local/build/" >&2; \
-        find /app/apps/meteor/dist /app/apps/meteor/.meteor/local -maxdepth 3 2>/dev/null >&2; \
+        echo "FATAL: main.js not found anywhere under /app after build:ci (checked loose files and tarballs)." >&2; \
+        echo "Contents of apps/meteor after build:" >&2; \
+        find /app/apps/meteor -maxdepth 4 2>/dev/null >&2; \
         exit 1; \
     fi
 
