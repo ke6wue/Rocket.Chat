@@ -1,14 +1,10 @@
-# ==============================================================================
-# Stage 1: Build source code using Debian-based Node 22 (glibc support)
-# ==============================================================================
+# Stage 1: Build source code using Debian-based Node 22
 FROM node:22-bookworm-slim AS builder
 
-# Prevent V8 Out-Of-Memory (OOM) heap crashes during Meteor compilation
 ENV NODE_OPTIONS="--max-old-space-size=8192"
 ENV METEOR_ALLOW_SUPERUSER=true
 ENV DISABLE_OBSOLETE_VERSION_CHECK=true
 
-# Install build tools, python, git, curl, unzip, and C++ headers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -22,130 +18,51 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno pinned strictly to v2.3.1 (required by @rocket.chat/apps)
+# Install Deno v2.3.1
 RUN curl -fsSL https://deno.land/x/install/install.sh | sh -s v2.3.1
 ENV DENO_INSTALL="/root/.deno"
 ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 WORKDIR /app
 
-# Enable Corepack for Yarn 4 / Berry
 RUN corepack enable
 
-# Install Meteor CLI
+# Install Meteor CLI into system PATH
 RUN curl "https://install.meteor.com/" | sh
 ENV PATH="${PATH}:/root/.meteor"
 
-# Copy source repository
 COPY . .
 
-# Install workspace dependencies and compile monorepo packages via Turborepo
+# Install workspace dependencies and build packages
 RUN yarn install --no-immutable || yarn install --immutable-save-lockfile
 RUN yarn build
 
-# Build the main Meteor application bundle.
-# NOTE: apps/meteor's own build:ci script already hardcodes its own output
-# path as a positional argument to `meteor build`. Passing an extra
-# `--directory <path>` (via Turbo or directly) supplies a SECOND positional
-# path on top of that hardcoded one, which is exactly the "too many
-# arguments" error Meteor's CLI throws. So: run it bare, with no extra args,
-# and let it use whatever output location the script already hardcodes.
-RUN yarn build:ci
+# Force Meteor to compile an uncompressed bundle directly
+WORKDIR /app/apps/meteor
+RUN meteor build --server-only --directory /tmp/meteor-build
 
-# Locate and flatten the resulting bundle into /app/bundle-out.
-# Rather than guessing the exact output path (which varies by how
-# build:ci is scripted), search for main.js anywhere it could plausibly
-# have been written and copy its containing directory.
+# Flatten bundle contents into /app/bundle-out
 RUN mkdir -p /app/bundle-out && \
-    BUNDLE_DIR="$(find /app/apps/meteor -maxdepth 6 -type f -name main.js \
-        -not -path '*/node_modules/*' -exec dirname {} \; \
-        | while read -r d; do [ -d "$d/programs" ] && echo "$d"; done | head -n 1)" && \
-    echo "Detected bundle directory: ${BUNDLE_DIR:-<none found>}" && \
-    if [ -n "$BUNDLE_DIR" ]; then \
-        cp -r "$BUNDLE_DIR"/* /app/bundle-out/; \
+    if [ -d "/tmp/meteor-build/bundle" ]; then \
+        cp -r /tmp/meteor-build/bundle/* /app/bundle-out/; \
     else \
-        TARBALL="$(find /app/apps/meteor -maxdepth 6 -type f \( -name '*.tgz' -o -name '*.tar.gz' \) \
-            -not -path '*/node_modules/*' | head -n 1)"; \
-        echo "No matching main.js+programs/ dir found under apps/meteor; trying tarball: ${TARBALL:-<none found>}"; \
-        if [ -n "$TARBALL" ]; then \
-            mkdir -p /tmp/bundle-extract && \
-            tar -xzf "$TARBALL" -C /tmp/bundle-extract && \
-            INNER_DIR="$(find /tmp/bundle-extract -maxdepth 4 -type f -name main.js -exec dirname {} \; | head -n 1)" && \
-            if [ -n "$INNER_DIR" ]; then cp -r "$INNER_DIR"/* /app/bundle-out/; fi; \
-        fi; \
+        echo "FATAL: Meteor build failed to generate output files!"; exit 1; \
     fi && \
-    echo "=== Bundle Contents Verification ===" && \
-    ls -la /app/bundle-out
+    echo "=== VERIFYING BUILD OUTPUT ===" && \
+    ls -la /app/bundle-out/main.js
 
-# TEMPORARY DIAGNOSTIC STEP — does not fail the build on purpose.
-# We need to see, untruncated, what yarn build:ci actually produced and
-# what its script definition actually is, instead of guessing a location
-# a fourth time. Writes everything to a file so `docker cp` / `docker run`
-# can retrieve it even if later stages fail for unrelated reasons.
-RUN { \
-    echo "=== apps/meteor/package.json build-related scripts ==="; \
-    grep -A2 -E '"build' /app/apps/meteor/package.json || echo "(no match)"; \
-    echo; \
-    echo "=== root package.json build-related scripts ==="; \
-    grep -A2 -E '"build' /app/package.json || echo "(no match)"; \
-    echo; \
-    echo "=== turbo.json build:ci pipeline entry ==="; \
-    grep -A10 '"build:ci"' /app/turbo.json 2>/dev/null || echo "(no turbo.json or no match)"; \
-    echo; \
-    echo "=== full recursive tree of apps/meteor (depth 6, excluding node_modules) ==="; \
-    find /app/apps/meteor -maxdepth 6 -not -path '*/node_modules/*' | sort; \
-    echo; \
-    echo "=== every main.js anywhere in /app (excluding node_modules) ==="; \
-    find /app -type f -name main.js -not -path '*/node_modules/*'; \
-    } > /tmp/diagnostic-output.txt 2>&1; \
-    cat /tmp/diagnostic-output.txt
-
-# ==============================================================================
 # Stage 2: Production Runtime Environment
-# IMPORTANT: stays on the SAME libc family (glibc/Debian) as the builder.
-# Native addons (sharp, bcrypt-style bindings, etc.) are built against glibc
-# in Stage 1 and will fail to load ("Error loading shared library" / silent
-# crash) on an Alpine (musl) runtime image. Do not swap this back to alpine
-# unless you also rebuild all native deps against musl.
-# ==============================================================================
-FROM node:22-bookworm-slim
+FROM node:22-alpine
 
-# Runtime dependencies: graphicsmagick for image processing, deno for Apps-Engine,
-# fontconfig/dumb-init for stable process + signal handling in containers
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    graphicsmagick \
-    fontconfig \
-    dumb-init \
-    curl \
-    unzip \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Deno in the runtime image too (must match version used at build time)
-RUN curl -fsSL https://deno.land/x/install/install.sh | sh -s v2.3.1
-ENV DENO_INSTALL="/root/.deno"
-ENV PATH="${DENO_INSTALL}/bin:${PATH}"
+RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
-# Crucial fix: Trailing slash ensures contents are copied directly into /app/bundle
-COPY --from=builder /app/bundle-out/ /app/bundle/
+# Copy compiled bundle directly into /app/bundle
+COPY --from=builder /app/bundle-out /app/bundle
 
-WORKDIR /app/bundle
-# NOTE: classic (Meteor 2.x) bundles have a separate package.json/
-# npm-shrinkwrap.json in programs/server requiring their own npm install.
-# This bundle does NOT have one there — that's the signature of a
-# Meteor 3.x bundle, where the build output already includes a complete
-# node_modules and no separate install step is needed. Only run npm
-# install if that file actually exists, so this Dockerfile works either way.
-RUN if [ -f programs/server/package.json ]; then \
-        echo "Found programs/server/package.json — installing (classic Meteor 2.x bundle layout)"; \
-        cd programs/server && npm install --omit=dev; \
-    else \
-        echo "No programs/server/package.json — assuming Meteor 3.x bundle with node_modules already included"; \
-        echo "=== Checking for node_modules in bundle ==="; \
-        find /app/bundle -maxdepth 3 -type d -name node_modules; \
-    fi
+WORKDIR /app/bundle/programs/server
+RUN corepack enable && yarn install --production
 
 WORKDIR /app/bundle
 
@@ -155,7 +72,4 @@ ENV PORT=3000 \
     MONGO_OPLOG_URL=mongodb://mongodb:27017/local?replicaSet=rs0
 
 EXPOSE 3000
-
-# dumb-init properly forwards SIGTERM to node so `docker stop` shuts down cleanly
-ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "main.js"]
