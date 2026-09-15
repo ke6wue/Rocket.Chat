@@ -31,15 +31,20 @@ RUN yarn build
 WORKDIR /app/apps/meteor
 RUN yarn build:ci
 
-# Flatten bundle contents into /app/bundle-out
+# Debug output & robust bundle extraction
 RUN mkdir -p /app/bundle-out && \
-    if [ -d "/app/apps/meteor/dist/bundle" ]; then \
-        cp -r /app/apps/meteor/dist/bundle/* /app/bundle-out/; \
-    elif [ -f "/app/apps/meteor/dist/bundle.tgz" ]; then \
+    if [ -f "/app/apps/meteor/dist/bundle.tgz" ]; then \
         tar -xzf /app/apps/meteor/dist/bundle.tgz -C /app/bundle-out/ --strip-components=1; \
+    elif [ -d "/app/apps/meteor/dist/bundle" ]; then \
+        cp -r /app/apps/meteor/dist/bundle/* /app/bundle-out/; \
     elif [ -d "/app/apps/meteor/.meteor/local/build" ]; then \
         cp -r /app/apps/meteor/.meteor/local/build/* /app/bundle-out/; \
-    fi
+    fi && \
+    # Fallback fix if main.js is trapped inside a nested bundle folder
+    if [ ! -f "/app/bundle-out/main.js" ] && [ -d "/app/bundle-out/bundle" ]; then \
+        mv /app/bundle-out/bundle/* /app/bundle-out/ && rm -rf /app/bundle-out/bundle; \
+    fi && \
+    ls -la /app/bundle-out
 
 # Stage 2: Production Runtime Environment
 FROM node:22-alpine
@@ -48,7 +53,7 @@ RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
-# Copy flattened build assets directly
+# Copy the flattened bundle directory contents into /app/bundle
 COPY --from=builder /app/bundle-out /app/bundle
 
 WORKDIR /app/bundle/programs/server
