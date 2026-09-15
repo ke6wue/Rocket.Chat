@@ -44,11 +44,16 @@ RUN yarn install --no-immutable || yarn install --immutable-save-lockfile
 RUN yarn build
 
 # Build the main Meteor application bundle.
-# --directory dist matches Rocket.Chat's own CI (see .github/workflows/ci.yml),
-# so the bundle predictably lands at /app/apps/meteor/dist/bundle/main.js
-# instead of wherever Meteor's default output path happens to be.
-WORKDIR /app/apps/meteor
-RUN yarn build:ci -- --directory dist
+# IMPORTANT: this must run through Turbo from the repo root, exactly like
+# Rocket.Chat's own CI does (see .github/workflows/ci.yml):
+#   yarn build:ci -- --directory dist
+# Turbo owns the "--" here and forwards --directory <path> cleanly to the
+# one workspace task that has a build:ci script (@rocket.chat/meteor).
+# Calling apps/meteor's build:ci script directly via `yarn build:ci --
+# --directory dist` bypasses Turbo's arg forwarding and instead passes the
+# literal tokens `--directory` and `dist` as two separate positional
+# arguments to Meteor's CLI, which is a "too many arguments" error.
+RUN yarn build:ci -- --directory apps/meteor/dist
 
 # Extract and flatten bundle contents directly into /app/bundle-out
 RUN mkdir -p /app/bundle-out && \
