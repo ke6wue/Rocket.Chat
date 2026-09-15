@@ -1,7 +1,6 @@
-# Stage 1: Build source code using Debian-based Node 22 (glibc support for Meteor & Turbo)
+# Stage 1: Build source code using Debian-based Node 22
 FROM node:22-bookworm-slim AS builder
 
-# Install build essential tools, python, git, curl, unzip, and ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -12,35 +11,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno (required for @rocket.chat/apps execution and caching)
 RUN curl -fsSL https://deno.land/x/install/install.sh | sh
 ENV DENO_INSTALL="/root/.deno"
 ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 WORKDIR /app
 
-# Enable Corepack for Yarn 4 / Berry
 RUN corepack enable
 
-# Install Meteor CLI inside the builder stage
 RUN curl "https://install.meteor.com/" | sh
 ENV PATH="${PATH}:/root/.meteor"
 ENV METEOR_ALLOW_SUPERUSER=true
 
-# Copy full repository source code
 COPY . .
 
-# Install monorepo workspace dependencies
 RUN yarn install --no-immutable
-
-# Build all monorepo packages via Turborepo
 RUN yarn build
 
-# Build the main Meteor application bundle
 WORKDIR /app/apps/meteor
 RUN yarn build:ci
 
-# Standardize output path for Stage 2
+# Flatten bundle contents into /app/bundle-out
 RUN mkdir -p /app/bundle-out && \
     if [ -d "/app/apps/meteor/dist/bundle" ]; then \
         cp -r /app/apps/meteor/dist/bundle/* /app/bundle-out/; \
@@ -50,15 +41,14 @@ RUN mkdir -p /app/bundle-out && \
         cp -r /app/apps/meteor/.meteor/local/build/* /app/bundle-out/; \
     fi
 
-# Stage 2: Production Runtime Environment (Lightweight Alpine)
+# Stage 2: Production Runtime Environment
 FROM node:22-alpine
 
-# Install runtime dependencies (graphicsmagick and deno)
 RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
-# Copy the standardized bundle folder from Stage 1
+# Copy flattened build assets directly
 COPY --from=builder /app/bundle-out /app/bundle
 
 WORKDIR /app/bundle/programs/server
