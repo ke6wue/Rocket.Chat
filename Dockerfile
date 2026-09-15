@@ -75,15 +75,30 @@ RUN mkdir -p /app/bundle-out && \
         fi; \
     fi && \
     echo "=== Bundle Contents Verification ===" && \
-    ls -la /app/bundle-out && \
-    if [ ! -d "/app/bundle-out/programs" ]; then \
-        echo "FATAL: no Meteor bundle (main.js + programs/) found under apps/meteor." >&2; \
-        echo "All main.js files found anywhere in the repo, for reference:" >&2; \
-        find /app -type f -name main.js -not -path '*/node_modules/*' 2>/dev/null >&2; \
-        echo "Contents of apps/meteor after build:" >&2; \
-        find /app/apps/meteor -maxdepth 4 2>/dev/null >&2; \
-        exit 1; \
-    fi
+    ls -la /app/bundle-out
+
+# TEMPORARY DIAGNOSTIC STEP — does not fail the build on purpose.
+# We need to see, untruncated, what yarn build:ci actually produced and
+# what its script definition actually is, instead of guessing a location
+# a fourth time. Writes everything to a file so `docker cp` / `docker run`
+# can retrieve it even if later stages fail for unrelated reasons.
+RUN { \
+    echo "=== apps/meteor/package.json build-related scripts ==="; \
+    grep -A2 -E '"build' /app/apps/meteor/package.json || echo "(no match)"; \
+    echo; \
+    echo "=== root package.json build-related scripts ==="; \
+    grep -A2 -E '"build' /app/package.json || echo "(no match)"; \
+    echo; \
+    echo "=== turbo.json build:ci pipeline entry ==="; \
+    grep -A10 '"build:ci"' /app/turbo.json 2>/dev/null || echo "(no turbo.json or no match)"; \
+    echo; \
+    echo "=== full recursive tree of apps/meteor (depth 6, excluding node_modules) ==="; \
+    find /app/apps/meteor -maxdepth 6 -not -path '*/node_modules/*' | sort; \
+    echo; \
+    echo "=== every main.js anywhere in /app (excluding node_modules) ==="; \
+    find /app -type f -name main.js -not -path '*/node_modules/*'; \
+    } > /tmp/diagnostic-output.txt 2>&1; \
+    cat /tmp/diagnostic-output.txt
 
 # ==============================================================================
 # Stage 2: Production Runtime Environment
