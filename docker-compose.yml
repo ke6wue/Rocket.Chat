@@ -23,7 +23,7 @@ services:
     restart: always
     volumes:
       - mongodb_data:/data/db
-    command: mongod --replSet rs0 --oplogSize 128
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
 
 volumes:
   mongodb_data:
