@@ -1,7 +1,14 @@
-# Stage 1: Build source code using Debian-based Node 22
+# ==============================================================================
+# Stage 1: Build source code using Debian-based Node 22 (glibc support)
+# ==============================================================================
 FROM node:22-bookworm-slim AS builder
 
-# Install full build toolchain for native Node.js modules & node-gyp
+# Prevent V8 Out-Of-Memory (OOM) heap crashes during Meteor compilation
+ENV NODE_OPTIONS="--max-old-space-size=8192"
+ENV METEOR_ALLOW_SUPERUSER=true
+ENV DISABLE_OBSOLETE_VERSION_CHECK=true
+
+# Install build tools, python, git, curl, unzip, and C++ headers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -13,37 +20,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     pkg-config \
     libc6-dev \
-    libcairo2-dev \
-    libpango1.0-dev \
-    libjpeg-dev \
-    libgif-dev \
-    librsvg2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno
-RUN curl -fsSL https://deno.land/x/install/install.sh | sh
+# Install Deno pinned strictly to v2.3.1 (required by @rocket.chat/apps)
+RUN curl -fsSL https://deno.land/x/install/install.sh | sh -s v2.3.1
 ENV DENO_INSTALL="/root/.deno"
 ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 WORKDIR /app
 
+# Enable Corepack for Yarn 4 / Berry
 RUN corepack enable
 
 # Install Meteor CLI
 RUN curl "https://install.meteor.com/" | sh
 ENV PATH="${PATH}:/root/.meteor"
-ENV METEOR_ALLOW_SUPERUSER=true
 
+# Copy source repository
 COPY . .
 
-# Bypass strict lockfile checks and build all monorepo workspaces
+# Install workspace dependencies and compile monorepo packages via Turborepo
 RUN yarn install --no-immutable || yarn install --immutable-save-lockfile
 RUN yarn build
 
+# Build the main Meteor application bundle
 WORKDIR /app/apps/meteor
 RUN yarn build:ci
 
-# Extract and flatten bundle contents into /app/bundle-out
+# Extract and flatten bundle contents directly into /app/bundle-out
 RUN mkdir -p /app/bundle-out && \
     if [ -f "/app/apps/meteor/dist/bundle.tgz" ]; then \
         tar -xzf /app/apps/meteor/dist/bundle.tgz -C /app/bundle-out/ --strip-components=1; \
@@ -55,15 +59,20 @@ RUN mkdir -p /app/bundle-out && \
     if [ ! -f "/app/bundle-out/main.js" ] && [ -d "/app/bundle-out/bundle" ]; then \
         mv /app/bundle-out/bundle/* /app/bundle-out/ && rm -rf /app/bundle-out/bundle; \
     fi && \
+    echo "=== Bundle Contents Verification ===" && \
     ls -la /app/bundle-out
 
-# Stage 2: Production Runtime Environment
+# ==============================================================================
+# Stage 2: Production Runtime Environment (Lightweight Alpine)
+# ==============================================================================
 FROM node:22-alpine
 
-RUN apk add --no-cache graphicsmagick deno python3 make g++
+# Install runtime dependencies (GraphicsMagick for avatars/media, Deno for Apps)
+RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
+# Copy compiled production bundle from Stage 1 directly into /app/bundle
 COPY --from=builder /app/bundle-out /app/bundle
 
 WORKDIR /app/bundle/programs/server
