@@ -43,9 +43,12 @@ COPY . .
 RUN yarn install --no-immutable || yarn install --immutable-save-lockfile
 RUN yarn build
 
-# Build the main Meteor application bundle
+# Build the main Meteor application bundle.
+# --directory dist matches Rocket.Chat's own CI (see .github/workflows/ci.yml),
+# so the bundle predictably lands at /app/apps/meteor/dist/bundle/main.js
+# instead of wherever Meteor's default output path happens to be.
 WORKDIR /app/apps/meteor
-RUN yarn build:ci
+RUN yarn build:ci -- --directory dist
 
 # Extract and flatten bundle contents directly into /app/bundle-out
 RUN mkdir -p /app/bundle-out && \
@@ -60,7 +63,13 @@ RUN mkdir -p /app/bundle-out && \
         mv /app/bundle-out/bundle/* /app/bundle-out/ && rm -rf /app/bundle-out/bundle; \
     fi && \
     echo "=== Bundle Contents Verification ===" && \
-    ls -la /app/bundle-out
+    ls -la /app/bundle-out && \
+    if [ ! -f "/app/bundle-out/main.js" ]; then \
+        echo "FATAL: main.js not found in bundle output — build did not produce a usable bundle." >&2; \
+        echo "Checked: dist/bundle.tgz, dist/bundle/, .meteor/local/build/" >&2; \
+        find /app/apps/meteor/dist /app/apps/meteor/.meteor/local -maxdepth 3 2>/dev/null >&2; \
+        exit 1; \
+    fi
 
 # ==============================================================================
 # Stage 2: Production Runtime Environment
