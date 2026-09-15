@@ -57,16 +57,16 @@ RUN yarn build:ci
 # build:ci is scripted), search for main.js anywhere it could plausibly
 # have been written and copy its containing directory.
 RUN mkdir -p /app/bundle-out && \
-    BUNDLE_DIR="$(find /apps/meteor/ -maxdepth 6 -type f -name main.js \
-        -not -path '*/node_modules/*' -not -path '/app/bundle-out/*' \
-        -exec dirname {} \; | head -n 1)" && \
+    BUNDLE_DIR="$(find /app/apps/meteor -maxdepth 6 -type f -name main.js \
+        -not -path '*/node_modules/*' -exec dirname {} \; \
+        | while read -r d; do [ -d "$d/programs" ] && echo "$d"; done | head -n 1)" && \
     echo "Detected bundle directory: ${BUNDLE_DIR:-<none found>}" && \
     if [ -n "$BUNDLE_DIR" ]; then \
         cp -r "$BUNDLE_DIR"/* /app/bundle-out/; \
     else \
-        TARBALL="$(find /app -maxdepth 6 -type f \( -name '*.tgz' -o -name '*.tar.gz' \) \
+        TARBALL="$(find /app/apps/meteor -maxdepth 6 -type f \( -name '*.tgz' -o -name '*.tar.gz' \) \
             -not -path '*/node_modules/*' | head -n 1)"; \
-        echo "No loose main.js found; trying tarball: ${TARBALL:-<none found>}"; \
+        echo "No matching main.js+programs/ dir found under apps/meteor; trying tarball: ${TARBALL:-<none found>}"; \
         if [ -n "$TARBALL" ]; then \
             mkdir -p /tmp/bundle-extract && \
             tar -xzf "$TARBALL" -C /tmp/bundle-extract && \
@@ -76,8 +76,10 @@ RUN mkdir -p /app/bundle-out && \
     fi && \
     echo "=== Bundle Contents Verification ===" && \
     ls -la /app/bundle-out && \
-    if [ ! -f "/app/bundle-out/main.js" ]; then \
-        echo "FATAL: main.js not found anywhere under /app after build:ci (checked loose files and tarballs)." >&2; \
+    if [ ! -d "/app/bundle-out/programs" ]; then \
+        echo "FATAL: no Meteor bundle (main.js + programs/) found under apps/meteor." >&2; \
+        echo "All main.js files found anywhere in the repo, for reference:" >&2; \
+        find /app -type f -name main.js -not -path '*/node_modules/*' 2>/dev/null >&2; \
         echo "Contents of apps/meteor after build:" >&2; \
         find /app/apps/meteor -maxdepth 4 2>/dev/null >&2; \
         exit 1; \
