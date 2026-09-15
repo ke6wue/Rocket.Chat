@@ -40,6 +40,10 @@ services:
   # One-shot job: initializes the replica set exactly once, then exits.
   # Without this, MONGO_URL's replicaSet=rs0 param means the driver waits
   # forever for a PRIMARY that will never be elected.
+  # NOTE: idempotency is handled by catching rs.initiate()'s own
+  # "already initialized" error, not by pre-checking rs.status() — the
+  # latter can throw for reasons unrelated to "already initialized"
+  # (e.g. right after container restart) and mask what's actually going on.
   mongo-init-replica:
     image: mongo:6.0
     restart: "no"
@@ -50,11 +54,15 @@ services:
       mongosh mongodb://mongodb:27017/rocketchat --quiet --eval
       '
       try {
-        rs.status().ok;
-        print("Replica set already initialized");
-      } catch (e) {
         rs.initiate({ _id: "rs0", members: [ { _id: 0, host: "mongodb:27017" } ] });
         print("Replica set initiated");
+      } catch (e) {
+        if (e.codeName === "AlreadyInitialized" || /already initialized/i.test(e.message)) {
+          print("Replica set already initialized - nothing to do");
+        } else {
+          print("ERROR initializing replica set: " + e);
+          quit(1);
+        }
       }
       '
 
