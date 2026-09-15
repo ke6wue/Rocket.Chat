@@ -1,7 +1,7 @@
-# Stage 1: Build source using Debian-based Node 22 (full glibc support for Meteor & Turbo)
+# Stage 1: Build source code using Debian-based Node 22 (glibc support for Meteor & Turbo)
 FROM node:22-bookworm-slim AS builder
 
-# Install native build tools, python, git, curl, unzip, and ca-certificates
+# Install build essential tools, python, git, curl, unzip, and ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -19,26 +19,36 @@ ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 WORKDIR /app
 
-# Enable Corepack for Yarn Berry (Yarn 4)
+# Enable Corepack for Yarn 4 / Berry
 RUN corepack enable
 
-# Install Meteor CLI inside the builder container
+# Install Meteor CLI inside the builder stage
 RUN curl "https://install.meteor.com/" | sh
 ENV PATH="${PATH}:/root/.meteor"
 ENV METEOR_ALLOW_SUPERUSER=true
 
-# Copy repository source code
+# Copy full repository source code
 COPY . .
 
-# Install workspace dependencies
+# Install monorepo workspace dependencies
 RUN yarn install --no-immutable
 
-# Build all monorepo workspace packages via Turborepo
+# Build all monorepo packages via Turborepo
 RUN yarn build
 
-# Build the main Meteor application production bundle
+# Build the main Meteor application bundle
 WORKDIR /app/apps/meteor
 RUN yarn build:ci
+
+# Standardize output path for Stage 2
+RUN mkdir -p /app/bundle-out && \
+    if [ -d "/app/apps/meteor/dist/bundle" ]; then \
+        cp -r /app/apps/meteor/dist/bundle/* /app/bundle-out/; \
+    elif [ -f "/app/apps/meteor/dist/bundle.tgz" ]; then \
+        tar -xzf /app/apps/meteor/dist/bundle.tgz -C /app/bundle-out/ --strip-components=1; \
+    elif [ -d "/app/apps/meteor/.meteor/local/build" ]; then \
+        cp -r /app/apps/meteor/.meteor/local/build/* /app/bundle-out/; \
+    fi
 
 # Stage 2: Production Runtime Environment (Lightweight Alpine)
 FROM node:22-alpine
@@ -48,8 +58,8 @@ RUN apk add --no-cache graphicsmagick deno
 
 WORKDIR /app
 
-# Copy the compiled Meteor bundle from the builder stage
-COPY --from=builder /app/apps/meteor/dist/bundle /app/bundle
+# Copy the standardized bundle folder from Stage 1
+COPY --from=builder /app/bundle-out /app/bundle
 
 WORKDIR /app/bundle/programs/server
 RUN corepack enable && yarn install --production
