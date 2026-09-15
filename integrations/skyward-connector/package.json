@@ -1,0 +1,28 @@
+{
+  "name": "skyward-rocketchat-connector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provisions Rocket.Chat staff/student/parent accounts and class channels from Skyward Qmlativ, with FERPA-aware sync rules.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "migrate": "node --loader ts-node/esm src/store/migrate.ts",
+    "sync": "node --loader ts-node/esm src/index.ts --once",
+    "sync:watch": "node --loader ts-node/esm src/index.ts --cron"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.10",
+    "@types/node-cron": "^3.0.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
