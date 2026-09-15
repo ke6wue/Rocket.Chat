@@ -1,13 +1,14 @@
 # Stage 1: Build source code using Debian-based Node 22 (full glibc support for Meteor & Turbo)
 FROM node:22-bookworm-slim AS builder
 
-# Install build essential tools, python, git, curl, and Deno
+# Install build essential tools, python, git, curl, unzip, and Deno requirements
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     git \
     curl \
+    unzip \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
