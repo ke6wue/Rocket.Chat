@@ -54,11 +54,12 @@ RUN mkdir -p /app/bundle-out && \
 # Stage 2: Production Runtime Environment
 FROM node:22-alpine
 
-RUN apk add --no-cache graphicsmagick deno
+# Install build tools needed for native node-gyp bindings in Stage 2
+RUN apk add --no-cache graphicsmagick deno python3 make g++ build-base
 
 WORKDIR /app
 
-# Copy compiled bundle directly into /app/bundle
+# Copy compiled production bundle from Stage 1
 COPY --from=builder /app/bundle-out /app/bundle
 
 WORKDIR /app/bundle/programs/server
