@@ -63,12 +63,29 @@ RUN mkdir -p /app/bundle-out && \
     ls -la /app/bundle-out
 
 # ==============================================================================
-# Stage 2: Production Runtime Environment (Lightweight Alpine)
+# Stage 2: Production Runtime Environment
+# IMPORTANT: stays on the SAME libc family (glibc/Debian) as the builder.
+# Native addons (sharp, bcrypt-style bindings, etc.) are built against glibc
+# in Stage 1 and will fail to load ("Error loading shared library" / silent
+# crash) on an Alpine (musl) runtime image. Do not swap this back to alpine
+# unless you also rebuild all native deps against musl.
 # ==============================================================================
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
-# Install runtime dependencies
-RUN apk add --no-cache graphicsmagick deno
+# Runtime dependencies: graphicsmagick for image processing, deno for Apps-Engine,
+# fontconfig/dumb-init for stable process + signal handling in containers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    graphicsmagick \
+    fontconfig \
+    dumb-init \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Deno in the runtime image too (must match version used at build time)
+RUN curl -fsSL https://deno.land/x/install/install.sh | sh -s v2.3.1
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 WORKDIR /app
 
@@ -86,4 +103,7 @@ ENV PORT=3000 \
     MONGO_OPLOG_URL=mongodb://mongodb:27017/local?replicaSet=rs0
 
 EXPOSE 3000
+
+# dumb-init properly forwards SIGTERM to node so `docker stop` shuts down cleanly
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "main.js"]
