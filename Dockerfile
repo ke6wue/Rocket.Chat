@@ -57,7 +57,7 @@ RUN yarn build:ci
 # build:ci is scripted), search for main.js anywhere it could plausibly
 # have been written and copy its containing directory.
 RUN mkdir -p /app/bundle-out && \
-    BUNDLE_DIR="$(find /app -maxdepth 6 -type f -name main.js \
+    BUNDLE_DIR="$(find /app/meteor/ -maxdepth 6 -type f -name main.js \
         -not -path '*/node_modules/*' -not -path '/app/bundle-out/*' \
         -exec dirname {} \; | head -n 1)" && \
     echo "Detected bundle directory: ${BUNDLE_DIR:-<none found>}" && \
