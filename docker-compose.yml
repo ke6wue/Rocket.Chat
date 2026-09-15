@@ -4,27 +4,62 @@ services:
       context: .
       dockerfile: Dockerfile
     image: custom-k12-chat:v1.0
-    restart: always
+    restart: on-failure
     environment:
       - PORT=3000
-      - ROOT_URL=http://localhost:3000
+      - ROOT_URL=${ROOT_URL:-http://localhost:3000}
       - MONGO_URL=mongodb://mongodb:27017/rocketchat?replicaSet=rs0
       - MONGO_OPLOG_URL=mongodb://mongodb:27017/local?replicaSet=rs0
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASS=ChangeThisSecurePassword
-      - ADMIN_EMAIL=admin@yourdistrict.org
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:?Set ADMIN_PASS in your .env file}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@yourdistrict.org}
+      - DEPLOY_METHOD=docker
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
+      mongo-init-replica:
+        condition: service_completed_successfully
     ports:
       - "3000:3000"
+    volumes:
+      - rocketchat_uploads:/app/uploads
 
   mongodb:
     image: mongo:6.0
     restart: always
     volumes:
       - mongodb_data:/data/db
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--oplogSize", "128"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  # One-shot job: initializes the replica set exactly once, then exits.
+  # Without this, MONGO_URL's replicaSet=rs0 param means the driver waits
+  # forever for a PRIMARY that will never be elected.
+  mongo-init-replica:
+    image: mongo:6.0
+    restart: "no"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command: >
+      mongosh mongodb://mongodb:27017/rocketchat --quiet --eval
+      '
+      try {
+        rs.status().ok;
+        print("Replica set already initialized");
+      } catch (e) {
+        rs.initiate({ _id: "rs0", members: [ { _id: 0, host: "mongodb:27017" } ] });
+        print("Replica set initiated");
+      }
+      '
 
 volumes:
   mongodb_data:
+    driver: local
+  rocketchat_uploads:
     driver: local
